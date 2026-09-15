@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>correctarr</Name>
+  <Repository>correctarr:local</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/playerz93/correctarr</Support>
+  <Project>https://github.com/playerz93/correctarr</Project>
+  <Overview>Checks that every file Sonarr and Radarr own exists on disk, resolves through its symlink, passes an ffprobe read-through, and is present in Plex. Fix actions: arr re-search and Plex folder scan. Simple web GUI, no auth.</Overview>
+  <Category>MediaServer:Video Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8585]/</WebUI>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <Config Name="WebUI port" Target="8585" Default="8585" Mode="tcp" Description="Port for the web GUI" Type="Port" Display="always" Required="true" Mask="false">8585</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/correctarr" Mode="rw" Description="SQLite database and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/correctarr</Config>
+  <Config Name="Media" Target="/mnt/user/data" Default="/mnt/user/data" Mode="ro,slave" Description="The media path exactly as Sonarr, Radarr and Plex see it. Must include both the arr root folders and the debrid mount the symlinks point into. Use 'slave' propagation so the rclone/FUSE mount is visible." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data</Config>
+  <Config Name="PLEX_URL" Target="PLEX_URL" Default="" Mode="" Description="Optional: seed the Plex URL on first start" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PLEX_TOKEN" Target="PLEX_TOKEN" Default="" Mode="" Description="Optional: seed the Plex token on first start" Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="TZ" Target="TZ" Default="Europe/Copenhagen" Mode="" Description="Timezone" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Copenhagen</Config>
+</Container>
