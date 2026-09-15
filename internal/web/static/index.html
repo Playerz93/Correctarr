@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Correctarr</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%234f8cff%27/%3E%3Cpath d=%27M8 17l5 5 11-12%27 fill=%27none%27 stroke=%27white%27 stroke-width=%274%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">Correctarr <span id="version" class="muted"></span></div>
+  <nav>
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="runs">Runs</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+  <div id="banner" class="banner hidden"></div>
+</header>
+
+<main>
+<!-- ============================================================ DASHBOARD -->
+<section id="tab-dashboard" class="tab-pane">
+  <div class="tiles">
+    <div class="tile broken"><div class="num" id="t-broken">–</div><div class="lbl">Broken</div><div class="sub">found, nothing done yet</div></div>
+    <div class="tile fixing"><div class="num" id="t-needfix">–</div><div class="lbl">Need to fix</div><div class="sub">fix sent, waiting to come back</div></div>
+    <div class="tile fixed"><div class="num" id="t-fixed">–</div><div class="lbl">Fixed</div><div class="sub">confirmed healthy again</div></div>
+  </div>
+
+  <div class="card controls">
+    <div class="row">
+      <button id="btn-sweep" class="primary">Run sweep</button>
+      <button id="btn-dry">Dry run</button>
+      <select id="sel-depth" title="Integrity depth for this run">
+        <option value="">Integrity: configured</option>
+        <option value="off">Integrity: off</option>
+        <option value="quick">Integrity: quick</option>
+        <option value="standard">Integrity: standard (ffprobe)</option>
+        <option value="full">Integrity: full read</option>
+      </select>
+      <button id="btn-cancel" class="danger hidden">Cancel</button>
+      <span class="spacer"></span>
+      <button id="btn-fixall" class="warn" title="Applies the automatic fix to every broken finding">Fix all</button>
+      <button id="btn-clearfixed" class="ghost">Clear fixed</button>
+    </div>
+    <div id="progress" class="progress hidden">
+      <div class="bar"><div id="progress-bar"></div></div>
+      <div id="progress-text" class="muted"></div>
+    </div>
+    <div id="runinfo" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <div class="row filters">
+      <select id="f-status">
+        <option value="">All statuses</option>
+        <option value="broken" selected>Broken</option>
+        <option value="fixing">Need to fix</option>
+        <option value="fixed">Fixed</option>
+      </select>
+      <select id="f-instance"><option value="">All instances</option></select>
+      <input id="f-search" placeholder="Filter by title or path…">
+      <span class="spacer"></span>
+      <span id="f-count" class="muted"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="findings">
+        <thead><tr>
+          <th>Status</th><th>Instance</th><th>Title</th><th>Issue</th><th>Path / detail</th><th>Last action</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="findings-empty" class="empty hidden">Nothing here.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================= RUNS -->
+<section id="tab-runs" class="tab-pane hidden">
+  <div class="card">
+    <table id="runs">
+      <thead><tr><th>#</th><th>Started</th><th>Mode</th><th>Integrity</th><th>Status</th><th>Files</th><th>New broken</th><th>Newly fixed</th><th>Tally after</th><th>Duration</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card hidden" id="runlog-card">
+    <div class="row"><strong id="runlog-title"></strong><span class="spacer"></span><button class="ghost" id="runlog-close">Close</button></div>
+    <pre id="runlog"></pre>
+  </div>
+</section>
+
+<!-- ============================================================= SETTINGS -->
+<section id="tab-settings" class="tab-pane hidden">
+  <div class="card">
+    <h2>Plex</h2>
+    <div class="grid">
+      <label>URL <input id="plex-url" placeholder="http://192.168.1.10:32400"></label>
+      <label>Token <input id="plex-token" type="password" placeholder="X-Plex-Token"></label>
+    </div>
+    <div class="row">
+      <button id="plex-test">Test connection</button>
+      <span id="plex-test-result" class="result"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row"><h2>Sonarr / Radarr</h2><span class="spacer"></span><button id="arr-add">Add instance</button></div>
+    <p class="muted">The type is detected automatically when you press Test connection.</p>
+    <div id="arr-list"></div>
+  </div>
+
+  <div class="card">
+    <h2>Sweep</h2>
+    <div class="grid">
+      <label>Interval (hours) <input id="s-interval" type="number" min="1" max="168"></label>
+      <label>Integrity depth
+        <select id="s-depth">
+          <option value="off">Off (disk + Plex only)</option>
+          <option value="quick">Quick (head, tail, container magic)</option>
+          <option value="standard">Standard (quick + ffprobe)</option>
+          <option value="full">Full (standard + read every byte)</option>
+        </select>
+      </label>
+      <label>Parallel file checks <input id="s-workers" type="number" min="1" max="16"></label>
+      <label>ffprobe timeout (seconds) <input id="s-ffprobe" type="number" min="10" max="900"></label>
+      <label>Delay between fixes (seconds) <input id="s-fixdelay" type="number" min="0" max="120"></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Fixing</h2>
+    <label class="toggle"><input type="checkbox" id="s-dryrun"> <span><strong>Dry run</strong> – fix actions are only described, never sent to Sonarr, Radarr or Plex. Applies to manual fixes, Fix all and auto-fix.</span></label>
+    <label class="toggle"><input type="checkbox" id="s-autofix"> <span><strong>Auto-fix after every sweep</strong> – apply the automatic fix to each newly found broken item.</span></label>
+    <label class="toggle"><input type="checkbox" id="s-fixall"> <span><strong>Arm the Fix all button</strong> – when off, Fix all on the dashboard is disabled.</span></label>
+    <p class="muted">Automatic fix per issue: missing / dead / empty / failed-integrity file → delete the file record in the arr and search for a replacement. Healthy file not in Plex → ask Plex to scan that folder.</p>
+  </div>
+
+  <div class="row">
+    <button id="settings-save" class="primary">Save settings</button>
+    <span id="settings-result" class="result"></span>
+  </div>
+</section>
+</main>
+
+<template id="arr-row">
+  <div class="arr-row">
+    <div class="grid">
+      <label>Name <input class="a-name" placeholder="Sonarr 4K"></label>
+      <label>URL <input class="a-url" placeholder="http://192.168.1.10:8989"></label>
+      <label>API key <input class="a-key" type="password"></label>
+    </div>
+    <div class="row">
+      <span class="pill a-type">unknown</span>
+      <label class="inline"><input type="checkbox" class="a-enabled" checked> Enabled</label>
+      <span class="spacer"></span>
+      <button class="a-test">Test connection</button>
+      <button class="a-save primary">Save</button>
+      <button class="a-delete danger ghost">Remove</button>
+    </div>
+    <div class="result a-result"></div>
+  </div>
+</template>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+services:
+  correctarr:
+    build: .
+    image: correctarr:local
+    container_name: correctarr
+    restart: unless-stopped
+    ports:
+      - "8585:8585"
+    environment:
+      - TZ=Europe/Copenhagen
+      # Optional: pre-seed Plex on first start. Everything else is set in the GUI.
+      # - PLEX_URL=http://192.168.1.10:32400
+      # - PLEX_TOKEN=xxxxxxxx
+    volumes:
+      - ./data:/config
+      # Mount the media exactly as Sonarr, Radarr and Plex see it, read-only.
+      # Both the arr root folders (with the symlinks) and the debrid/rclone
+      # mount they point into must be visible at the same paths.
+      - /mnt/user/data:/mnt/user/data:ro
