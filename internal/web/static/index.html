@@ -40,9 +40,11 @@
       </select>
       <button id="btn-cancel" class="danger hidden">Cancel</button>
       <span class="spacer"></span>
-      <button id="btn-fixall" class="warn" title="Applies the automatic fix to every broken finding">Fix all</button>
+      <button id="btn-fixsel" class="warn" disabled title="Apply the automatic fix to the checked rows">Fix selected</button>
+      <button id="btn-fixall" class="warn" title="Apply the automatic fix to every broken finding">Fix all</button>
       <button id="btn-clearfixed" class="ghost">Clear fixed</button>
     </div>
+    <div id="summary" class="summary hidden"></div>
     <div id="progress" class="progress hidden">
       <div class="bar"><div id="progress-bar"></div></div>
       <div id="progress-text" class="muted"></div>
@@ -66,7 +68,7 @@
     <div class="table-wrap">
       <table id="findings">
         <thead><tr>
-          <th>Status</th><th>Instance</th><th>Title</th><th>Issue</th><th>Path / detail</th><th>Last action</th><th></th>
+          <th class="chk"><input type="checkbox" id="chk-all" title="Select all shown"></th><th>Status</th><th>Instance</th><th>Title</th><th>Issue</th><th>Path / detail</th><th>Last action</th><th></th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -129,9 +131,10 @@
 
   <div class="card">
     <h2>Fixing</h2>
-    <label class="toggle"><input type="checkbox" id="s-dryrun"> <span><strong>Dry run</strong> – fix actions are only described, never sent to Sonarr, Radarr or Plex. Applies to manual fixes, Fix all and auto-fix.</span></label>
-    <label class="toggle"><input type="checkbox" id="s-autofix"> <span><strong>Auto-fix after every sweep</strong> – apply the automatic fix to each newly found broken item.</span></label>
-    <label class="toggle"><input type="checkbox" id="s-fixall"> <span><strong>Arm the Fix all button</strong> – when off, Fix all on the dashboard is disabled.</span></label>
+    <p class="muted">Manual sweeps only check. Afterwards you fix from the dashboard: per-row <strong>Re-search</strong> / <strong>Plex scan</strong>, tick rows and <strong>Fix selected</strong>, or <strong>Fix all</strong>. Those buttons always act for real (each asks for confirmation).</p>
+    <label class="toggle"><input type="checkbox" id="s-fixall"> <span><strong>Arm the Fix all button</strong> – when off, Fix all on the dashboard is disabled. Fix selected is always available.</span></label>
+    <label class="toggle"><input type="checkbox" id="s-autofix"> <span><strong>Auto-fix after scheduled sweeps</strong> – apply the automatic fix to every broken item found by the timer.</span></label>
+    <label class="toggle"><input type="checkbox" id="s-autofix-dry"> <span><strong>Auto-fix in dry-run mode</strong> – scheduled auto-fix only writes what it would do into the run log. Turn off once you trust it.</span></label>
     <p class="muted">Automatic fix per issue: missing / dead / empty / failed-integrity file → delete the file record in the arr and search for a replacement. Healthy file not in Plex → ask Plex to scan that folder.</p>
   </div>
 

@@ -164,7 +164,12 @@ func (s *Service) Start(req Request) (int64, error) {
 		s.mu.Unlock()
 		return 0, err
 	}
-	dry := settings.DryRun
+	// Manual sweeps never fix anything, so dry-run only matters for the
+	// scheduled auto-fix and for an explicit dry run.
+	dry := false
+	if req.Mode == ModeScheduled {
+		dry = settings.AutoFixDryRun
+	}
 	if req.DryRun != nil {
 		dry = *req.DryRun
 	}
@@ -516,7 +521,8 @@ loop:
 	lg.Printf("checked %d files: %d unhealthy (%s), %d new, %d newly fixed", total, len(toFix)+countFixing(existing, seen), strings.Join(parts, ", "), newBroken, newlyFixed)
 
 	// 5. Fixes.
-	if run.Mode == ModeDry || settings.AutoFix {
+	switch {
+	case run.Mode == ModeDry, run.Mode == ModeScheduled && settings.AutoFix:
 		if len(toFix) > 0 {
 			s.setPhase("fixing", 0, len(toFix), "")
 			label := "auto-fix"
@@ -545,6 +551,8 @@ loop:
 		} else {
 			lg.Printf("nothing to fix")
 		}
+	case run.Mode == ModeManual && len(toFix) > 0:
+		lg.Printf("%d broken findings waiting: use Fix selected, Fix all, or the per-row buttons", len(toFix))
 	}
 	if ctx.Err() != nil {
 		finish("cancelled")
@@ -609,8 +617,9 @@ func checkItem(ctx context.Context, it *fileItem, ix *plex.Index, opt integrity.
 	}
 }
 
-// Fix carries out one fix action for a finding, honouring the dry-run setting.
-func (s *Service) Fix(ctx context.Context, findingID int64, action string) (string, error) {
+// Fix carries out one fix action for a finding. With dry set the action is
+// only described.
+func (s *Service) Fix(ctx context.Context, findingID int64, action string, dry bool) (string, error) {
 	if s.Status().Running {
 		return "", ErrRunning
 	}
@@ -628,7 +637,7 @@ func (s *Service) Fix(ctx context.Context, findingID int64, action string) (stri
 	if settings.PlexURL != "" && settings.PlexToken != "" {
 		pc = plex.New(settings.PlexURL, settings.PlexToken)
 	}
-	return s.applyFix(ctx, f, action, settings.DryRun, settings, pc)
+	return s.applyFix(ctx, f, action, dry, settings, pc)
 }
 
 // FixAllResult summarises a fix-all pass.
@@ -640,9 +649,11 @@ type FixAllResult struct {
 	Lines     []string `json:"lines"`
 }
 
-// FixAll applies the automatic fix to every finding in the broken state.
-func (s *Service) FixAll(ctx context.Context) (FixAllResult, error) {
-	var res FixAllResult
+// FixAll applies the automatic fix to every finding in the broken state, or,
+// when ids are given, to exactly those findings (any state except fixed).
+// The fix-all arm switch is only required for the "everything" form.
+func (s *Service) FixAll(ctx context.Context, ids []int64, dry bool) (FixAllResult, error) {
+	res := FixAllResult{DryRun: dry}
 	if s.Status().Running {
 		return res, ErrRunning
 	}
@@ -652,13 +663,28 @@ func (s *Service) FixAll(ctx context.Context) (FixAllResult, error) {
 	if err != nil {
 		return res, err
 	}
-	if !settings.FixAllArmed {
-		return res, errors.New("fix all is not armed: enable it in settings first")
-	}
-	res.DryRun = settings.DryRun
-	list, err := s.db.ListFindings(db.StatusBroken, 0)
-	if err != nil {
-		return res, err
+	var list []db.Finding
+	if len(ids) == 0 {
+		if !settings.FixAllArmed && !dry {
+			return res, errors.New("fix all is not armed: enable it in settings first")
+		}
+		list, err = s.db.ListFindings(db.StatusBroken, 0)
+		if err != nil {
+			return res, err
+		}
+	} else {
+		for _, id := range ids {
+			f, err := s.db.GetFinding(id)
+			if err != nil {
+				res.Lines = append(res.Lines, fmt.Sprintf("finding %d: not found", id))
+				continue
+			}
+			if f.Status == db.StatusFixed {
+				res.Lines = append(res.Lines, fmt.Sprintf("%s: %s -> already fixed, skipped", f.InstanceName, f.Title))
+				continue
+			}
+			list = append(list, f)
+		}
 	}
 	var pc *plex.Client
 	if settings.PlexURL != "" && settings.PlexToken != "" {
@@ -669,7 +695,7 @@ func (s *Service) FixAll(ctx context.Context) (FixAllResult, error) {
 			break
 		}
 		res.Attempted++
-		msg, err := s.applyFix(ctx, f, ActionAuto, settings.DryRun, settings, pc)
+		msg, err := s.applyFix(ctx, f, ActionAuto, dry, settings, pc)
 		if err != nil {
 			res.Failed++
 			res.Lines = append(res.Lines, fmt.Sprintf("%s: %s -> error: %v", f.InstanceName, f.Title, err))
@@ -677,7 +703,7 @@ func (s *Service) FixAll(ctx context.Context) (FixAllResult, error) {
 			res.Succeeded++
 			res.Lines = append(res.Lines, fmt.Sprintf("%s: %s -> %s", f.InstanceName, f.Title, msg))
 		}
-		if !settings.DryRun && settings.FixDelaySeconds > 0 && i < len(list)-1 {
+		if !dry && settings.FixDelaySeconds > 0 && i < len(list)-1 {
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Duration(settings.FixDelaySeconds) * time.Second):
@@ -685,6 +711,110 @@ func (s *Service) FixAll(ctx context.Context) (FixAllResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// Recheck re-verifies one finding right now: asks the arr for the item's
+// current file, checks disk, integrity and Plex, and updates the finding.
+func (s *Service) Recheck(ctx context.Context, findingID int64) (db.Finding, string, error) {
+	if s.Status().Running {
+		return db.Finding{}, "", ErrRunning
+	}
+	s.fixMu.Lock()
+	defer s.fixMu.Unlock()
+	f, err := s.db.GetFinding(findingID)
+	if err != nil {
+		return f, "", fmt.Errorf("finding not found")
+	}
+	settings, err := s.db.GetSettings()
+	if err != nil {
+		return f, "", err
+	}
+	inst, err := s.db.GetArr(f.InstanceID)
+	if err != nil {
+		return f, "", fmt.Errorf("arr instance %d not found", f.InstanceID)
+	}
+	now := time.Now()
+	c := arr.New(inst.Name, inst.Type, inst.URL, inst.APIKey)
+	file, hasFile, err := c.GetFile(ctx, f.MediaID, f.EpisodeID)
+	if err != nil {
+		// The item itself is gone from the arr: nothing left to fix.
+		f.Status = db.StatusFixed
+		f.FixedAt = &now
+		f.LastSeen = now
+		f.LastAction = "item removed from arr: " + err.Error()
+		f.Detail = err.Error()
+		f, _ = s.db.UpsertFinding(f)
+		return f, "item no longer exists in the arr, marked fixed", nil
+	}
+	if !hasFile {
+		f.LastSeen = now
+		f.Detail = "arr has no file for this item yet"
+		if f.Status == db.StatusBroken {
+			// The file record went away without our doing; treat as resolved.
+			f.Status = db.StatusFixed
+			f.FixedAt = &now
+			f.LastAction = "file record removed from arr"
+		}
+		f, err = s.db.UpsertFinding(f)
+		return f, "arr has no file for this item yet (still searching?)", err
+	}
+
+	// Plex index for just the section this path belongs to.
+	var ix *plex.Index
+	if settings.PlexURL != "" && settings.PlexToken != "" {
+		pc := plex.New(settings.PlexURL, settings.PlexToken)
+		if secs, err := pc.Sections(ctx); err == nil {
+			all := &plex.Index{Sections: secs}
+			want := "movie"
+			if inst.Type == arr.Sonarr {
+				want = "show"
+			}
+			if key := all.SectionFor(file.Path, want); key != "" {
+				for _, sec := range secs {
+					if sec.Key == key {
+						ix, _ = pc.IndexSection(ctx, sec)
+					}
+				}
+				f.PlexSectionID = key
+			}
+		}
+	}
+	depth := settings.IntegrityDepth
+	if (depth == integrity.DepthStandard || depth == integrity.DepthFull) && !integrity.HaveFfprobe() {
+		depth = integrity.DepthQuick
+	}
+	it := fileItem{inst: inst, file: file}
+	checkItem(ctx, &it, ix, integrity.Options{Depth: depth, FfprobeTimeout: time.Duration(settings.FfprobeTimeoutSecs) * time.Second})
+
+	f.Path = file.Path
+	f.FileID = file.FileID
+	f.Title = file.Label
+	f.LastSeen = now
+	if it.issue == "" {
+		if f.Status != db.StatusFixed {
+			f.Status = db.StatusFixed
+			f.FixedAt = &now
+			if f.FixRequestedAt == nil {
+				f.LastAction = "healthy on re-check"
+			} else {
+				f.LastAction = "confirmed healthy after fix"
+			}
+		}
+		f.Detail = "healthy"
+		f, err = s.db.UpsertFinding(f)
+		return f, "healthy", err
+	}
+	f.Issue = it.issue
+	f.Detail = it.detail
+	if f.Status == db.StatusFixed {
+		f.Status = db.StatusBroken
+		f.FirstSeen = now
+		f.FixRequestedAt = nil
+		f.FixedAt = nil
+		f.LastAction = "reopened on re-check"
+	}
+	f, err = s.db.UpsertFinding(f)
+	return f, "still " + it.issue + ": " + it.detail, err
 }
 
 func chooseAction(f db.Finding) string {

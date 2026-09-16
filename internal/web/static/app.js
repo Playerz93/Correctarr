@@ -67,9 +67,10 @@
     $('#progress').classList.toggle('hidden', !running);
     const fixall = $('#btn-fixall');
     fixall.disabled = running || !status.fix_all_armed || status.tally.broken === 0;
-    fixall.title = status.fix_all_armed ? (status.dry_run ? 'Dry run is on: actions will only be described' : 'Applies the automatic fix to every broken finding')
-                                        : 'Arm the Fix all button in Settings first';
-    fixall.textContent = status.dry_run ? 'Fix all (dry run)' : 'Fix all';
+    fixall.title = status.fix_all_armed ? 'Apply the automatic fix to every broken finding' : 'Arm the Fix all button in Settings first';
+    fixall.textContent = `Fix all${status.tally.broken ? ` (${status.tally.broken})` : ''}`;
+    $('#btn-fixsel').disabled = running || selected.size === 0;
+    $('#btn-fixsel').textContent = `Fix selected${selected.size ? ` (${selected.size})` : ''}`;
     if (running) {
       const p = status.sweep.progress;
       const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
@@ -79,17 +80,36 @@
     const parts = [];
     if (status.arr_count === 0) parts.push('No enabled Sonarr/Radarr instances – add them in Settings.');
     if (!status.plex_configured) parts.push('Plex not configured – Plex checks are skipped.');
-    if (status.dry_run) parts.push('Dry run is ON: fixes are described, not sent.');
-    if (status.auto_fix) parts.push('Auto-fix after sweep is ON.');
+    if (status.auto_fix) parts.push(`Auto-fix after scheduled sweeps is ON${status.auto_fix_dry_run ? ' (dry-run mode)' : ''}.`);
     if (status.last_run) parts.push(`Last run: ${fmtTime(status.last_run.finished_at)} (${status.last_run.status}, ${status.last_run.files_checked} files).`);
     if (status.sweep.next_run_at) parts.push(`Next scheduled: ${fmtTime(status.sweep.next_run_at)} (${rel(status.sweep.next_run_at)}).`);
     $('#runinfo').textContent = parts.join(' ');
-    if (wasRunning && !running) { loadFindings(); if (!$('#tab-runs').classList.contains('hidden')) loadRuns(); }
+    if (wasRunning && !running) {
+      loadFindings();
+      if (!$('#tab-runs').classList.contains('hidden')) loadRuns();
+      showSummary(status.last_run);
+    }
     wasRunning = running;
+  }
+
+  function showSummary(run) {
+    const el = $('#summary');
+    if (!run) { el.classList.add('hidden'); return; }
+    const t = status.tally;
+    let text = `Run #${run.id} ${run.status} – ${run.files_checked} files checked, ${run.new_broken} newly broken, ${run.newly_fixed} newly fixed. `;
+    if (run.dry_run) text += 'Dry run: fixes were only described, see the run log. ';
+    if (t.broken > 0) text += `${t.broken} broken item${t.broken === 1 ? '' : 's'} waiting – tick rows and press Fix selected, use the per-row buttons, or Fix all.`;
+    else if (t.need_fix > 0) text += `${t.need_fix} item${t.need_fix === 1 ? '' : 's'} waiting for a replacement to arrive.`;
+    else text += 'Nothing broken.';
+    el.textContent = text;
+    el.className = `summary ${t.broken > 0 ? 'has-broken' : 'clean'}`;
+    $('#f-status').value = t.broken > 0 ? 'broken' : (t.need_fix > 0 ? 'fixing' : '');
+    loadFindings();
   }
 
   // ------------------------------------------------------------ findings
   let findings = [];
+  const selected = new Set();
   async function loadFindings() {
     const st = $('#f-status').value, inst = $('#f-instance').value;
     try { findings = await api('GET', `/api/findings?status=${st}&instance=${inst}`); } catch (e) { banner(e.message, 'err'); return; }
@@ -101,10 +121,15 @@
     const tb = $('#findings tbody'); tb.innerHTML = '';
     $('#f-count').textContent = `${rows.length} shown`;
     $('#findings-empty').classList.toggle('hidden', rows.length > 0);
+    const visible = new Set(rows.map(f => f.id));
+    for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
+    $('#chk-all').checked = rows.length > 0 && rows.every(f => f.status === 'fixed' || selected.has(f.id)) && selected.size > 0;
     for (const f of rows) {
       const tr = document.createElement('tr');
       const canPlex = status && status.plex_configured;
+      tr.classList.toggle('selected', selected.has(f.id));
       tr.innerHTML = `
+        <td class="chk">${f.status === 'fixed' ? '' : `<input type="checkbox" ${selected.has(f.id) ? 'checked' : ''}>`}</td>
         <td><span class="pill ${f.status}">${statusLabel[f.status] || f.status}</span></td>
         <td><span class="pill ${f.instance_type}">${f.instance_name}</span></td>
         <td class="title">${esc(f.title)}<div class="muted" style="font-size:11px">first seen ${fmtTime(f.first_seen)}</div></td>
@@ -112,23 +137,49 @@
         <td class="path">${esc(f.path)}${f.detail ? `<div>${esc(f.detail)}</div>` : ''}</td>
         <td class="last muted" style="font-size:12px">${esc(f.last_action || '')}${f.fix_requested_at ? `<div>fix sent ${fmtTime(f.fix_requested_at)}</div>` : ''}${f.fixed_at ? `<div>fixed ${fmtTime(f.fixed_at)}</div>` : ''}</td>
         <td class="actions"></td>`;
+      const cb = $('td.chk input', tr);
+      if (cb) cb.addEventListener('change', () => { cb.checked ? selected.add(f.id) : selected.delete(f.id); tr.classList.toggle('selected', cb.checked); updateSelectionUI(); });
       const act = $('.actions', tr);
       if (f.status !== 'fixed') {
-        act.append(btn('Re-search', () => fix(f, 'research'), 'small', 'Delete the file record in the arr and search again'));
+        act.append(btn('Re-search', () => fix(f, 'research'), 'small', 'Delete the file record in the arr and search for a replacement'));
         if (canPlex) act.append(btn('Plex scan', () => fix(f, 'plexscan'), 'small', 'Ask Plex to scan this folder'));
       }
+      act.append(btn('Re-check', () => recheck(f), 'small ghost', 'Verify this item again right now'));
       act.append(btn('✕', () => del(f), 'small ghost', 'Forget this finding'));
       tb.append(tr);
     }
+    updateSelectionUI();
   }
+  function updateSelectionUI() {
+    const b = $('#btn-fixsel');
+    b.disabled = selected.size === 0 || !!(status && status.sweep.running);
+    b.textContent = `Fix selected${selected.size ? ` (${selected.size})` : ''}`;
+  }
+  $('#chk-all').addEventListener('change', (e) => {
+    const q = $('#f-search').value.trim().toLowerCase();
+    findings.filter(f => f.status !== 'fixed' && (!q || f.title.toLowerCase().includes(q) || f.path.toLowerCase().includes(q)))
+      .forEach(f => e.target.checked ? selected.add(f.id) : selected.delete(f.id));
+    renderFindings();
+  });
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const btn = (label, fn, cls = '', title = '') => { const b = document.createElement('button'); b.textContent = label; b.className = cls; b.title = title; b.addEventListener('click', fn); return b; };
 
   async function fix(f, action) {
-    if (!status.dry_run && action === 'research' && !confirm(`Delete the file record for "${f.title}" in ${f.instance_name} and search for a replacement?`)) return;
+    const q = action === 'research'
+      ? `Delete the file record for "${f.title}" in ${f.instance_name} and tell it to search for a replacement?`
+      : `Ask Plex to scan the folder of "${f.title}"?`;
+    if (!confirm(q)) return;
     try {
       const r = await api('POST', `/api/findings/${f.id}/fix`, { action });
-      banner(r.message, 'info', 6000);
+      banner(`Done: ${r.message}`, 'info', 6000);
+      await Promise.all([loadFindings(), refreshStatus()]);
+    } catch (e) { banner(e.message, 'err', 8000); }
+  }
+  async function recheck(f) {
+    banner(`Re-checking "${f.title}"…`, 'info', 20000);
+    try {
+      const r = await api('POST', `/api/findings/${f.id}/recheck`);
+      banner(`${f.title}: ${r.message}`, r.finding.status === 'fixed' ? 'info' : 'err', 8000);
       await Promise.all([loadFindings(), refreshStatus()]);
     } catch (e) { banner(e.message, 'err', 8000); }
   }
@@ -146,24 +197,32 @@
   async function startSweep(mode) {
     try {
       await api('POST', '/api/sweep', { mode, depth: $('#sel-depth').value });
-      banner(mode === 'dry' ? 'Dry run started – fixes will be described in the run log, not sent.' : 'Sweep started.');
+      banner(mode === 'dry' ? 'Dry run started – the fix plan goes into the run log, nothing is sent.' : 'Sweep started – findings appear when it finishes, then fix them from the table.');
       refreshStatus();
     } catch (e) { banner(e.message, 'err'); }
   }
   $('#btn-cancel').addEventListener('click', async () => { await api('POST', '/api/sweep/cancel'); refreshStatus(); });
-  $('#btn-fixall').addEventListener('click', async () => {
-    const n = status.tally.broken;
-    const msg = status.dry_run
-      ? `Dry run: describe the fix for all ${n} broken findings?`
-      : `Apply the automatic fix to all ${n} broken findings?\n\nBroken files: the file record is deleted in Sonarr/Radarr and a search is triggered.\nNot in Plex: a Plex folder scan is triggered.`;
-    if (!confirm(msg)) return;
-    const b = $('#btn-fixall'); b.disabled = true; b.textContent = 'Fixing…';
+  async function runFixAll(ids, label) {
+    const b = ids ? $('#btn-fixsel') : $('#btn-fixall');
+    const old = b.textContent; b.disabled = true; b.textContent = 'Fixing…';
     try {
-      const r = await api('POST', '/api/findings/fix-all');
-      banner(`${r.dry_run ? 'Dry run: ' : ''}${r.attempted} attempted, ${r.succeeded} ok, ${r.failed} failed.`, r.failed ? 'err' : 'info', 8000);
+      const r = await api('POST', '/api/findings/fix-all', ids ? { ids } : {});
+      banner(`${label}: ${r.attempted} attempted, ${r.succeeded} ok, ${r.failed} failed.`, r.failed ? 'err' : 'info', 8000);
       if (r.lines && r.lines.length) console.log(r.lines.join('\n'));
+      if (ids) selected.clear();
     } catch (e) { banner(e.message, 'err', 8000); }
+    b.textContent = old;
     await Promise.all([loadFindings(), refreshStatus()]);
+  }
+  $('#btn-fixall').addEventListener('click', () => {
+    const n = status.tally.broken;
+    if (!confirm(`Apply the automatic fix to all ${n} broken findings?\n\nBroken files: the file record is deleted in Sonarr/Radarr and a search is triggered.\nNot in Plex: a Plex folder scan is triggered.`)) return;
+    runFixAll(null, 'Fix all');
+  });
+  $('#btn-fixsel').addEventListener('click', () => {
+    const ids = [...selected];
+    if (!confirm(`Apply the automatic fix to the ${ids.length} selected finding${ids.length === 1 ? '' : 's'}?\n\nBroken files: the file record is deleted in Sonarr/Radarr and a search is triggered.\nNot in Plex: a Plex folder scan is triggered.`)) return;
+    runFixAll(ids, 'Fix selected');
   });
   $('#btn-clearfixed').addEventListener('click', async () => {
     if (!confirm('Remove all findings in the Fixed state? The Fixed counter resets to 0.')) return;
@@ -207,8 +266,8 @@
       $('#s-workers').value = s.integrity_workers;
       $('#s-ffprobe').value = s.ffprobe_timeout_seconds;
       $('#s-fixdelay').value = s.fix_delay_seconds;
-      $('#s-dryrun').checked = s.dry_run;
       $('#s-autofix').checked = s.auto_fix;
+      $('#s-autofix-dry').checked = s.auto_fix_dry_run;
       $('#s-fixall').checked = s.fix_all_armed;
       const list = $('#arr-list'); list.innerHTML = '';
       arrs.forEach(a => list.append(arrRow(a)));
@@ -274,9 +333,9 @@
       sweep_interval_hours: +$('#s-interval').value, integrity_depth: $('#s-depth').value,
       integrity_workers: +$('#s-workers').value, ffprobe_timeout_seconds: +$('#s-ffprobe').value,
       fix_delay_seconds: +$('#s-fixdelay').value,
-      dry_run: $('#s-dryrun').checked, auto_fix: $('#s-autofix').checked, fix_all_armed: $('#s-fixall').checked,
+      auto_fix: $('#s-autofix').checked, auto_fix_dry_run: $('#s-autofix-dry').checked, fix_all_armed: $('#s-fixall').checked,
     };
-    if (body.auto_fix && !body.dry_run && !confirm('Auto-fix with dry run OFF will delete file records in Sonarr/Radarr and trigger searches after every sweep. Continue?')) return;
+    if (body.auto_fix && !body.auto_fix_dry_run && !confirm('Auto-fix with dry-run mode OFF will delete file records in Sonarr/Radarr and trigger searches after every scheduled sweep. Continue?')) return;
     try { await api('PUT', '/api/settings', body); out.className = 'result ok'; out.textContent = 'Saved.'; refreshStatus(); }
     catch (e) { out.className = 'result err'; out.textContent = e.message; }
   });
