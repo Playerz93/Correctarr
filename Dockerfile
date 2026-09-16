@@ -9,10 +9,13 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
 
 # ---- runtime ---------------------------------------------------------------
 FROM alpine:3.20
-RUN apk add --no-cache ffmpeg ca-certificates tzdata
+RUN apk add --no-cache ffmpeg ca-certificates tzdata su-exec
 COPY --from=build /out/correctarr /usr/local/bin/correctarr
+COPY entrypoint.sh /entrypoint.sh
 ENV CORRECTARR_LISTEN=:8585 \
-    CORRECTARR_DATA=/config
+    CORRECTARR_DATA=/config \
+    PUID=99 \
+    PGID=100
 VOLUME /config
 EXPOSE 8585
-ENTRYPOINT ["/usr/local/bin/correctarr"]
+ENTRYPOINT ["/entrypoint.sh"]
