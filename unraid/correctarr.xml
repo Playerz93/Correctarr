@@ -11,7 +11,7 @@
   <Overview>Checks that every file Sonarr and Radarr own exists on disk, resolves through its symlink, passes an ffprobe read-through, and is present in Plex. Fix actions: arr re-search and Plex folder scan. Simple web GUI, no auth.</Overview>
   <Category>MediaServer:Video Tools:</Category>
   <WebUI>http://[IP]:[PORT:8585]/</WebUI>
-  <Icon/>
+  <Icon>https://raw.githubusercontent.com/Playerz93/Correctarr/main/unraid/correctarr.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <Config Name="WebUI port" Target="8585" Default="8585" Mode="tcp" Description="Port for the web GUI" Type="Port" Display="always" Required="true" Mask="false">8585</Config>
