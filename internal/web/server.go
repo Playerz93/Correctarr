@@ -45,6 +45,7 @@ func New(store *db.DB, svc *sweep.Service, logger *log.Logger, version string) h
 	mux.HandleFunc("POST /api/findings/{id}/fix", s.fixFinding)
 	mux.HandleFunc("DELETE /api/findings/{id}", s.deleteFinding)
 	mux.HandleFunc("POST /api/findings/fix-all", s.fixAll)
+	mux.HandleFunc("POST /api/findings/{id}/recheck", s.recheckFinding)
 	mux.HandleFunc("POST /api/findings/clear-fixed", s.clearFixed)
 	mux.HandleFunc("POST /api/sweep", s.startSweep)
 	mux.HandleFunc("POST /api/sweep/cancel", s.cancelSweep)
@@ -100,7 +101,7 @@ type statusResp struct {
 	Tally         db.Tally     `json:"tally"`
 	Sweep         sweep.Status `json:"sweep"`
 	LastRun       *db.Run      `json:"last_run,omitempty"`
-	DryRun        bool         `json:"dry_run"`
+	AutoFixDryRun bool         `json:"auto_fix_dry_run"`
 	AutoFix       bool         `json:"auto_fix"`
 	FixAllArmed   bool         `json:"fix_all_armed"`
 	PlexSet       bool         `json:"plex_configured"`
@@ -125,7 +126,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, statusResp{
 		Version: s.version, Tally: t, Sweep: s.sweep.Status(), LastRun: last,
-		DryRun: settings.DryRun, AutoFix: settings.AutoFix, FixAllArmed: settings.FixAllArmed,
+		AutoFixDryRun: settings.AutoFixDryRun, AutoFix: settings.AutoFix, FixAllArmed: settings.FixAllArmed,
 		PlexSet: settings.PlexURL != "" && settings.PlexToken != "", ArrCount: n, IntegrityMode: settings.IntegrityDepth,
 	})
 }
@@ -276,11 +277,12 @@ func (s *Server) fixFinding(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Action string `json:"action"`
+		DryRun bool   `json:"dry_run"`
 	}
 	_ = readJSON(r, &in)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	msg, err := s.sweep.Fix(ctx, id, in.Action)
+	msg, err := s.sweep.Fix(ctx, id, in.Action, in.DryRun)
 	if err != nil {
 		code := 500
 		if errors.Is(err, sweep.ErrRunning) {
@@ -306,10 +308,35 @@ func (s *Server) deleteFinding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
+func (s *Server) recheckFinding(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	f, msg, err := s.sweep.Recheck(ctx, id)
+	if err != nil {
+		code := 500
+		if errors.Is(err, sweep.ErrRunning) {
+			code = 409
+		}
+		writeErr(w, code, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "message": msg, "finding": f})
+}
+
 func (s *Server) fixAll(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IDs    []int64 `json:"ids"`
+		DryRun bool    `json:"dry_run"`
+	}
+	_ = readJSON(r, &in)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	res, err := s.sweep.FixAll(ctx)
+	res, err := s.sweep.FixAll(ctx, in.IDs, in.DryRun)
 	if err != nil {
 		code := 400
 		if errors.Is(err, sweep.ErrRunning) {

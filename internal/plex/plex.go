@@ -211,6 +211,19 @@ func (c *Client) BuildIndex(ctx context.Context) (*Index, error) {
 	return ix, nil
 }
 
+// IndexSection lists the file paths of one section only.
+func (c *Client) IndexSection(ctx context.Context, sec Section) (*Index, error) {
+	ix := &Index{Paths: map[string]string{}, Sections: []Section{sec}}
+	typ := "1"
+	if sec.Type == "show" {
+		typ = "4"
+	}
+	if err := c.indexSection(ctx, sec.Key, typ, ix); err != nil {
+		return nil, err
+	}
+	return ix, nil
+}
+
 func (c *Client) indexSection(ctx context.Context, key, typ string, ix *Index) error {
 	start := 0
 	for {

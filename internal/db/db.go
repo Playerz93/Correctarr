@@ -98,7 +98,7 @@ type Settings struct {
 	SweepIntervalHours int    `json:"sweep_interval_hours"`
 	IntegrityDepth     string `json:"integrity_depth"` // off, quick, standard, full
 	IntegrityWorkers   int    `json:"integrity_workers"`
-	DryRun             bool   `json:"dry_run"`
+	AutoFixDryRun      bool   `json:"auto_fix_dry_run"`
 	AutoFix            bool   `json:"auto_fix"`
 	FixAllArmed        bool   `json:"fix_all_armed"`
 	FixDelaySeconds    int    `json:"fix_delay_seconds"`
@@ -110,7 +110,7 @@ func DefaultSettings() Settings {
 		SweepIntervalHours: 6,
 		IntegrityDepth:     "standard",
 		IntegrityWorkers:   3,
-		DryRun:             true,
+		AutoFixDryRun:      true,
 		AutoFix:            false,
 		FixAllArmed:        false,
 		FixDelaySeconds:    2,
@@ -141,8 +141,8 @@ func (d *DB) GetSettings() (Settings, error) {
 			s.IntegrityDepth = v
 		case "integrity_workers":
 			s.IntegrityWorkers, _ = strconv.Atoi(v)
-		case "dry_run":
-			s.DryRun = v == "1"
+		case "auto_fix_dry_run":
+			s.AutoFixDryRun = v == "1"
 		case "auto_fix":
 			s.AutoFix = v == "1"
 		case "fix_all_armed":
@@ -187,7 +187,7 @@ func (d *DB) SaveSettings(s Settings) error {
 		"sweep_interval_hours":    strconv.Itoa(s.SweepIntervalHours),
 		"integrity_depth":         s.IntegrityDepth,
 		"integrity_workers":       strconv.Itoa(s.IntegrityWorkers),
-		"dry_run":                 b2s(s.DryRun),
+		"auto_fix_dry_run":        b2s(s.AutoFixDryRun),
 		"auto_fix":                b2s(s.AutoFix),
 		"fix_all_armed":           b2s(s.FixAllArmed),
 		"fix_delay_seconds":       strconv.Itoa(s.FixDelaySeconds),

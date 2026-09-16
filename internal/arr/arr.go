@@ -294,3 +294,70 @@ func (c *Client) Search(ctx context.Context, f File) error {
 	_, err := c.do(ctx, http.MethodPost, "api/v3/command", cmd, nil)
 	return err
 }
+
+// GetFile returns the arr's current file for one movie or episode. ok is
+// false when the item exists but has no file (for example while a search is
+// still running). An error is returned when the item itself is gone.
+func (c *Client) GetFile(ctx context.Context, mediaID, episodeID int) (File, bool, error) {
+	switch c.Type {
+	case Radarr:
+		var m movie
+		code, err := c.do(ctx, http.MethodGet, fmt.Sprintf("api/v3/movie/%d", mediaID), nil, &m)
+		if code == http.StatusNotFound {
+			return File{}, false, fmt.Errorf("movie %d no longer exists in %s", mediaID, c.Name)
+		}
+		if err != nil {
+			return File{}, false, err
+		}
+		title := m.Title
+		if m.Year > 0 {
+			title = fmt.Sprintf("%s (%d)", m.Title, m.Year)
+		}
+		if m.MovieFile == nil || m.MovieFile.ID == 0 || m.MovieFile.Path == "" {
+			return File{MediaID: m.ID, Title: title, Label: title}, false, nil
+		}
+		return File{FileID: m.MovieFile.ID, Path: m.MovieFile.Path, Size: m.MovieFile.Size, MediaID: m.ID, Title: title, Label: title}, true, nil
+	case Sonarr:
+		var s series
+		code, err := c.do(ctx, http.MethodGet, fmt.Sprintf("api/v3/series/%d", mediaID), nil, &s)
+		if code == http.StatusNotFound {
+			return File{}, false, fmt.Errorf("series %d no longer exists in %s", mediaID, c.Name)
+		}
+		if err != nil {
+			return File{}, false, err
+		}
+		var eps []episode
+		if _, err := c.do(ctx, http.MethodGet, fmt.Sprintf("api/v3/episode?seriesId=%d", mediaID), nil, &eps); err != nil {
+			return File{}, false, err
+		}
+		var ep *episode
+		for i := range eps {
+			if eps[i].ID == episodeID {
+				ep = &eps[i]
+				break
+			}
+		}
+		if ep == nil {
+			return File{}, false, fmt.Errorf("episode %d no longer exists in %s", episodeID, c.Name)
+		}
+		label := fmt.Sprintf("%s - S%02dE%02d", s.Title, ep.SeasonNumber, ep.EpisodeNumber)
+		if ep.Title != "" {
+			label += " - " + ep.Title
+		}
+		f := File{MediaID: s.ID, Title: s.Title, EpisodeID: ep.ID, SeasonNumber: ep.SeasonNumber, Label: label}
+		if ep.EpisodeFileID == 0 {
+			return f, false, nil
+		}
+		var ef episodeFile
+		code, err = c.do(ctx, http.MethodGet, fmt.Sprintf("api/v3/episodefile/%d", ep.EpisodeFileID), nil, &ef)
+		if code == http.StatusNotFound || ef.Path == "" {
+			return f, false, nil
+		}
+		if err != nil {
+			return File{}, false, err
+		}
+		f.FileID, f.Path, f.Size = ef.ID, ef.Path, ef.Size
+		return f, true, nil
+	}
+	return File{}, false, fmt.Errorf("unknown arr type %q", c.Type)
+}

@@ -32,27 +32,27 @@ later sweep). A fixed item that breaks again reopens as broken.
 Standard is the default for scheduled sweeps. Full is meant for the
 "Integrity" dropdown on the dashboard when you want a one-off deep pass.
 
-## Running
+## Running on Unraid (Compose Manager)
 
-```yaml
-services:
-  correctarr:
-    image: correctarr:local        # docker build -t correctarr:local .
-    container_name: correctarr
-    ports:
-      - "8585:8585"
-    volumes:
-      - /mnt/user/appdata/correctarr:/config
-      - /mnt/user/data:/mnt/user/data:ro,rslave
-    restart: unless-stopped
-```
+1. Install the **Compose Manager** plugin from Community Applications.
+2. Add a new stack called `correctarr` and paste the contents of
+   [`docker-compose.yml`](docker-compose.yml) from this repo.
+3. Change the two host paths under `volumes` if yours differ, then **Compose Up**.
+
+The image is built by GitHub Actions and published to
+`ghcr.io/playerz93/correctarr:latest` on every push to `main`. While the
+repository is private the package is private too: either make the package
+public once in GitHub (Packages → correctarr → Package settings → Change
+visibility) or run `docker login ghcr.io` on the Unraid console first. You can
+also comment out `image:` and uncomment `build:` to build straight from the
+repo on Unraid.
 
 The media path must be mounted **exactly as Sonarr, Radarr and Plex see it**,
 and must include both the arr root folders (where the symlinks are) and the
-debrid mount the symlinks point into. Use `slave`/`rslave` propagation so the
-FUSE mount inside that path is visible to the container.
+debrid mount the symlinks point into. `rslave` propagation keeps the FUSE mount
+visible inside the container.
 
-An Unraid template is in `unraid/correctarr.xml`.
+A classic Unraid Docker template is also in `unraid/correctarr.xml`.
 
 Open `http://<host>:8585`. There is no login; keep it on your LAN.
 
@@ -62,6 +62,7 @@ Open `http://<host>:8585`. There is no login; keep it on your LAN.
 | --- | --- | --- |
 | `CORRECTARR_LISTEN` | `:8585` | Listen address |
 | `CORRECTARR_DATA` | `/config` | Where `correctarr.db` is stored |
+| `PUID`, `PGID` | `99`, `100` | User and group the process runs as. The config folder is chowned on start. |
 | `PLEX_URL`, `PLEX_TOKEN` | | Optional: seed Plex settings on first start. The GUI always wins afterwards. |
 
 ## First run
@@ -70,13 +71,23 @@ Open `http://<host>:8585`. There is no login; keep it on your LAN.
    **Test connection**. The type is detected from the reply. Save each one.
 2. Settings → Plex URL and token, **Test connection** lists the movie and show
    sections it can see. Save settings.
-3. Dashboard → **Dry run**. The run log shows every finding and what the fix
-   would do, without touching anything.
-4. When the list looks right, either fix items one by one from the table, or
-   arm **Fix all** in Settings and use the button. Turn **Dry run** off in
-   Settings when you want fixes to actually be sent.
+3. Dashboard → **Run sweep**. A manual sweep only checks; when it finishes the
+   summary line tells you how many items are broken and the table shows them.
+4. Fix from the table:
+   - **Re-search** on a row deletes that file record in the arr and triggers a
+     search. **Plex scan** asks Plex to scan that folder. **Re-check** verifies
+     the item again right now and moves it to Fixed if it is healthy.
+   - Tick rows and press **Fix selected** to apply the automatic fix to just
+     those.
+   - **Fix all** does the same for every broken item. It stays disabled until
+     you arm it in Settings.
+   Every one of these asks for confirmation and then acts for real.
+5. **Dry run** does a sweep and writes the fix plan into the run log without
+   sending anything. Useful before turning on auto-fix.
 
-Safety defaults: dry run is on, auto-fix is off, Fix all is not armed.
+Scheduled sweeps run every N hours and only check, unless **Auto-fix after
+scheduled sweeps** is on. Auto-fix starts in dry-run mode; switch that off in
+Settings once the plan in the run log looks right.
 
 ## Development
 
@@ -96,7 +107,8 @@ Everything the GUI does goes through `/api/...`:
 `GET /api/status`, `GET|PUT /api/settings`, `GET|POST /api/arrs`,
 `DELETE /api/arrs/{id}`, `POST /api/arrs/test`, `POST /api/plex/test`,
 `GET /api/findings?status=&instance=`, `POST /api/findings/{id}/fix`
-(`{"action":"auto|research|plexscan"}`), `DELETE /api/findings/{id}`,
-`POST /api/findings/fix-all`, `POST /api/findings/clear-fixed`,
+(`{"action":"auto|research|plexscan","dry_run":false}`),
+`POST /api/findings/{id}/recheck`, `DELETE /api/findings/{id}`,
+`POST /api/findings/fix-all` (`{"ids":[...],"dry_run":false}`, no ids = all broken), `POST /api/findings/clear-fixed`,
 `POST /api/sweep` (`{"mode":"manual|dry","depth":""}`), `POST /api/sweep/cancel`,
 `GET /api/runs`, `GET /api/runs/{id}`.

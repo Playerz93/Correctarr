@@ -1,19 +1,44 @@
+# Correctarr – Unraid Compose Manager stack
+#
+# Plug and play: paste this into a new stack in Compose Manager, adjust the
+# two host paths under "volumes" if yours differ, then Compose Up.
+#
+# Image: built automatically by GitHub Actions and published to
+#   ghcr.io/playerz93/correctarr
+# If the repository is private the package is private too. Either make the
+# package public once (GitHub -> your profile -> Packages -> correctarr ->
+# Package settings -> Change visibility) or log in on Unraid first:
+#   docker login ghcr.io -u Playerz93
+#
+# Prefer building locally instead? Comment out "image:" and uncomment "build:".
+
 services:
   correctarr:
-    build: .
-    image: correctarr:local
+    image: ghcr.io/playerz93/correctarr:latest
+    # build:
+    #   context: https://github.com/Playerz93/Correctarr.git
     container_name: correctarr
     restart: unless-stopped
     ports:
       - "8585:8585"
     environment:
-      - TZ=Europe/Copenhagen
-      # Optional: pre-seed Plex on first start. Everything else is set in the GUI.
-      # - PLEX_URL=http://192.168.1.10:32400
-      # - PLEX_TOKEN=xxxxxxxx
+      TZ: Europe/Copenhagen
+      PUID: "99"          # nobody
+      PGID: "100"         # users
+      # Optional: seed Plex on first start. The GUI always wins afterwards.
+      # PLEX_URL: http://192.168.1.10:32400
+      # PLEX_TOKEN: xxxxxxxxxxxxxxxxxxxx
     volumes:
-      - ./data:/config
-      # Mount the media exactly as Sonarr, Radarr and Plex see it, read-only.
-      # Both the arr root folders (with the symlinks) and the debrid/rclone
-      # mount they point into must be visible at the same paths.
-      - /mnt/user/data:/mnt/user/data:ro
+      # SQLite database and settings
+      - /mnt/user/appdata/correctarr:/config
+      # Media, mounted EXACTLY as Sonarr, Radarr and Plex see it. Must include
+      # both the arr root folders (the symlinks) and the debrid/rclone mount
+      # they point into. rslave makes the FUSE mount visible inside the
+      # container even if it is (re)mounted after the container starts.
+      - /mnt/user/data:/mnt/user/data:ro,rslave
+    labels:
+      net.unraid.docker.managed: composeman
+      net.unraid.docker.webui: http://[IP]:[PORT:8585]/
+      net.unraid.docker.icon: https://raw.githubusercontent.com/Playerz93/Correctarr/main/unraid/correctarr.png
+      # Private repo? Use the icon served by the container instead:
+      # net.unraid.docker.icon: http://192.168.1.10:8585/icon.png

@@ -76,3 +76,8 @@ pre#runlog { background: var(--bg); border: 1px solid var(--border); border-radi
 .banner.err { background: #4a1d1d; color: #ffb3b3; }
 tr.clickable { cursor: pointer; }
 @media (max-width: 700px) { main { padding: 12px; } .tile .num { font-size: 30px; } }
+th.chk, td.chk { width: 28px; padding-right: 0; }
+.summary { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--panel2); border-left: 4px solid var(--accent); font-size: 13px; }
+.summary.has-broken { border-left-color: var(--red); }
+.summary.clean { border-left-color: var(--green); }
+tr.selected td { background: rgba(79,140,255,.08); }
